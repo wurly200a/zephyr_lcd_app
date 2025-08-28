@@ -3,28 +3,32 @@
 	aliases { display = &ili9341; };
 };
 
-/* 必要な dt-bindings（← 先頭に zephyr/ は付けない） */
+/* 必要な dt-bindings（順不同） */
 #include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/spi/spi.h>           /* SPI_HALF_DUPLEX 用 */
 #include <dt-bindings/mipi_dbi/mipi_dbi.h>
 #include <dt-bindings/display/ili9xxx.h>
 
-/* SPI3 を有効化し CS0 を GPIO0_25 に割当て */
+/* SPI3 を有効化し CS0 を GPIO25 に割当（必要に応じて変更） */
 &spi3 {
 	status = "okay";
 	cs-gpios = <&gpio0 25 GPIO_ACTIVE_LOW>;
 
-	/* MIPI-DBI ラッパ（バス） */
+	/* MIPI-DBI ラッパ（SPI を使うバス） */
 	mipi_dbi: mipi-dbi-spi@0 {
 		compatible = "zephyr,mipi-dbi-spi";
 		reg = <0>;
 		status = "okay";
 
-		/* この MIPI-DBI が使う SPI デバイス＝SPI コントローラ */
+		/* MIPI-DBI が使う SPI コントローラ */
 		spi-dev = <&spi3>;
 
-		/* D/C, RESET はバス側 */
-		dc-gpios    = <&gpio0 26 GPIO_ACTIVE_LOW>;
+		/* D/C, RESET */
+		dc-gpios    = <&gpio0 26 GPIO_ACTIVE_HIGH>;
 		reset-gpios = <&gpio0 33 GPIO_ACTIVE_LOW>;
+
+		/* ★周波数は bus 側は clock-frequency で指定（まずは 8 MHz） */
+		clock-frequency = <8000000>;
 
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -38,9 +42,13 @@
 			height = <320>;
 			rotation = <270>;
 
-			mipi-mode          = "MIPI_DBI_MODE_SPI_4WIRE";
-			mipi-max-frequency = <40000000>;
-			pixel-format       = <ILI9XXX_PIXEL_FORMAT_RGB565>;
+			/* 子(デバイス)側での MIPI 設定類 */
+			mipi-mode         = "MIPI_DBI_MODE_SPI_4WIRE";
+			pixel-format      = <ILI9XXX_PIXEL_FORMAT_RGB565>;
+			mipi-max-frequency = <8000000>;     /* デバイス側の上限 */
+//			duplex            = <SPI_HALF_DUPLEX>; /* 半二重に明示 */
+			/* 必要に応じて：mipi-cpol; mipi-cpha; mipi-hold-cs; など */
+
 			display-inversion;
 		};
 	};
