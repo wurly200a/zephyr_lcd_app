@@ -9,9 +9,12 @@
 #include <dt-bindings/mipi_dbi/mipi_dbi.h>
 #include <dt-bindings/display/ili9xxx.h>
 
-&spi2 {
+&spi3 {
 	status = "okay";
-	cs-gpios = <&gpio0 14 GPIO_ACTIVE_LOW>;
+	use-iomux;                       /* IO_MUX 直結（高速時に安定） */
+	pinctrl-0 = <&spim3_default>;    /* MOSI=23, MISO=19, SCLK=18, CSEL=5（CSはGPIOで別管理） */
+	pinctrl-names = "default";
+	cs-gpios = <&gpio0 26 GPIO_ACTIVE_LOW>;
 
 	/* MIPI-DBI ラッパ（SPI を使うバス） */
 	mipi_dbi: mipi-dbi-spi@0 {
@@ -20,7 +23,7 @@
 		status = "okay";
 
 		/* MIPI-DBI が使う SPI コントローラ */
-		spi-dev = <&spi2>;
+		spi-dev = <&spi3>;
 
 		/* D/C, RESET */
 		dc-gpios    = <&gpio0 27 GPIO_ACTIVE_HIGH>;
