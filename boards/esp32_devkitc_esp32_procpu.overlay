@@ -9,10 +9,9 @@
 #include <dt-bindings/mipi_dbi/mipi_dbi.h>
 #include <dt-bindings/display/ili9xxx.h>
 
-/* SPI3 を有効化し CS0 を GPIO25 に割当（必要に応じて変更） */
-&spi3 {
+&spi2 {
 	status = "okay";
-	cs-gpios = <&gpio0 25 GPIO_ACTIVE_LOW>;
+	cs-gpios = <&gpio0 14 GPIO_ACTIVE_LOW>;
 
 	/* MIPI-DBI ラッパ（SPI を使うバス） */
 	mipi_dbi: mipi-dbi-spi@0 {
@@ -21,10 +20,10 @@
 		status = "okay";
 
 		/* MIPI-DBI が使う SPI コントローラ */
-		spi-dev = <&spi3>;
+		spi-dev = <&spi2>;
 
 		/* D/C, RESET */
-		dc-gpios    = <&gpio0 26 GPIO_ACTIVE_HIGH>;
+		dc-gpios    = <&gpio0 27 GPIO_ACTIVE_HIGH>;
 		reset-gpios = <&gpio0 33 GPIO_ACTIVE_LOW>;
 
 		/* ★周波数は bus 側は clock-frequency で指定（まずは 8 MHz） */
@@ -49,7 +48,7 @@
 //			duplex            = <SPI_HALF_DUPLEX>; /* 半二重に明示 */
 			/* 必要に応じて：mipi-cpol; mipi-cpha; mipi-hold-cs; など */
 
-			display-inversion;
+//			display-inversion;
 		};
 	};
 };
