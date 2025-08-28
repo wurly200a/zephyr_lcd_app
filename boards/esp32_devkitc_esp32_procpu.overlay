@@ -42,7 +42,7 @@
 
 			width = <240>;
 			height = <320>;
-			rotation = <270>;
+            rotation = <90>;
 
 			/* 子(デバイス)側での MIPI 設定類 */
 			mipi-mode         = "MIPI_DBI_MODE_SPI_4WIRE";
