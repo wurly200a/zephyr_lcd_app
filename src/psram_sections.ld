@@ -1,7 +1,7 @@
-SECTIONS
+/* LVGLのVDB用セクションをPSRAM(ext_ram_seg)へ */
+SECTION_DATA_PROLOGUE(.lvgl_buf,(NOLOAD),SUBALIGN(4))
 {
-  .lvgl_buf (NOLOAD) :
-  {
-    KEEP(*(SORT(.lvgl_buf*)))
-  } > ext_ram_seg
-}
+    . = ALIGN(4);
+    KEEP(*(.lvgl_buf*))
+    . = ALIGN(4);
+} > ext_ram_seg

@@ -31,7 +31,7 @@ west build -p always -b esp32_devkitc/esp32/procpu \
 ## Build
 
 ```
-west build -p always -b esp32_devkitc/esp32/procpu ~/project_zephyr/lcd_app
+west build -p always -b esp32_devkitc/esp32/procpu -S psram-4M -S psram-wifi ~/project_zephyr/lcd_app
 ```
 
 ## Flash
