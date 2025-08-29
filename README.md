@@ -8,13 +8,13 @@ cd ~/zephyrproject/zephyr
 source ~/zephyrproject/.venv/bin/activate
 ```
 
+if necessary
+
+```
 ZEPHYR_BASE=~/zephyrproject/zephyr
-
-## Build
-
 ```
-west build -p always -b esp32_devkitc/esp32/procpu ~/project_zephyr/lcd_app
-```
+
+## Build Sample
 
 ```
 west build -p always -b esp32_devkitc/esp32/procpu \
@@ -26,6 +26,12 @@ west build -p always -b esp32_devkitc/esp32/procpu \
 west build -p always -b esp32_devkitc/esp32/procpu \
   ~/zephyrproject/zephyr/samples/subsys/display/lvgl \
   -DDTC_OVERLAY_FILE=~/project_zephyr/lcd_app/boards/esp32_devkitc_esp32_procpu.overlay
+```
+
+## Build
+
+```
+west build -p always -b esp32_devkitc/esp32/procpu ~/project_zephyr/lcd_app
 ```
 
 ## Flash
