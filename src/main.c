@@ -20,6 +20,27 @@ static void timer_cb(lv_timer_t *timer)
     lv_label_set_text_fmt(label, "sec=%d", sec++);
 }
 
+/* === 追加: タッチ可視化 === */
+static void touch_ev_cb(lv_event_t *e)
+{
+    lv_obj_t *label = (lv_obj_t *)lv_event_get_user_data(e);
+    lv_event_code_t code = lv_event_get_code(e);
+
+    lv_point_t p = { -1, -1 };
+    lv_indev_t *indev = lv_indev_get_act(); /* 現在処理中の入力デバイス（ポインタ想定） */
+    if (indev && lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
+        lv_indev_get_point(indev, &p);
+    }
+
+    if (code == LV_EVENT_PRESSED) {
+        lv_label_set_text_fmt(label, "Touch: PRESS  x=%d y=%d", p.x, p.y);
+    } else if (code == LV_EVENT_PRESSING) {
+        lv_label_set_text_fmt(label, "Touch: DRAG   x=%d y=%d", p.x, p.y);
+    } else if (code == LV_EVENT_RELEASED) {
+        lv_label_set_text_fmt(label, "Touch: RELEASE x=%d y=%d", p.x, p.y);
+    }
+}
+
 void main(void)
 {
     /* バックライト ON */
@@ -72,6 +93,31 @@ void main(void)
     lv_obj_set_size(box, 120, 40);
     lv_obj_set_style_bg_color(box, lv_color_hex(0xFF0000), 0);
     lv_obj_align(box, LV_ALIGN_BOTTOM_RIGHT, -8, -8);
+
+    /* 1) タッチ状態を表示するラベル */
+    lv_obj_t *touch_lbl = lv_label_create(scr);
+    lv_label_set_text(touch_lbl, "Touch: (waiting)");
+    lv_obj_align(touch_lbl, LV_ALIGN_BOTTOM_LEFT, 8, -56);
+
+    /* ルート画面をクリック可能にしてイベントを受ける */
+    lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(scr, touch_ev_cb, LV_EVENT_PRESSED,   touch_lbl);
+    lv_obj_add_event_cb(scr, touch_ev_cb, LV_EVENT_PRESSING,  touch_lbl);
+    lv_obj_add_event_cb(scr, touch_ev_cb, LV_EVENT_RELEASED,  touch_lbl);
+
+    /* 2) ポインタにカーソル丸を付ける（指の位置が可視化される） */
+    lv_indev_t *indev = NULL;
+    for (indev = lv_indev_get_next(NULL); indev; indev = lv_indev_get_next(indev)) {
+        if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
+            lv_obj_t *cursor = lv_obj_create(scr);
+            lv_obj_set_size(cursor, 12, 12);
+            lv_obj_set_style_bg_color(cursor, lv_color_white(), 0);
+            lv_obj_set_style_radius(cursor, LV_RADIUS_CIRCLE, 0);
+            lv_obj_set_style_border_width(cursor, 0, 0);
+            lv_indev_set_cursor(indev, cursor);
+            break;
+        }
+    }
 
     /* 初回強制リフレッシュ */
     lv_refr_now(NULL);
