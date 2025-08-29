@@ -3,34 +3,33 @@
 	aliases { display = &ili9341; };
 };
 
-/* 必要な dt-bindings（順不同） */
+/* 必要な dt-bindings */
 #include <dt-bindings/gpio/gpio.h>
-#include <dt-bindings/spi/spi.h>           /* SPI_HALF_DUPLEX 用 */
+#include <dt-bindings/spi/spi.h>
 #include <dt-bindings/mipi_dbi/mipi_dbi.h>
 #include <dt-bindings/display/ili9xxx.h>
 
 &spi3 {
 	status = "okay";
-	use-iomux;                       /* IO_MUX 直結（高速時に安定） */
-	pinctrl-0 = <&spim3_default>;    /* MOSI=23, MISO=19, SCLK=18, CSEL=5（CSはGPIOで別管理） */
+	use-iomux;
+	pinctrl-0 = <&spim3_default>;   /* MOSI=23, MISO=19, SCLK=18 */
 	pinctrl-names = "default";
-	cs-gpios = <&gpio0 26 GPIO_ACTIVE_LOW>;
 
-	/* MIPI-DBI ラッパ（SPI を使うバス） */
+	/* ★ LCD用CS(26) と Touch用CS(21) の2本。間にカンマが要る！ */
+	cs-gpios = <&gpio0 26 GPIO_ACTIVE_LOW>, <&gpio0 21 GPIO_ACTIVE_LOW>;
+
+	/* MIPI-DBI ラッパ */
 	mipi_dbi: mipi-dbi-spi@0 {
 		compatible = "zephyr,mipi-dbi-spi";
 		reg = <0>;
 		status = "okay";
 
-		/* MIPI-DBI が使う SPI コントローラ */
+		/* MIPI-DBI が使う SPI デバイス（親の &spi3 を指定） */
 		spi-dev = <&spi3>;
 
-		/* D/C, RESET */
 		dc-gpios    = <&gpio0 27 GPIO_ACTIVE_HIGH>;
 		reset-gpios = <&gpio0 33 GPIO_ACTIVE_LOW>;
-
-		/* ★周波数は bus 側は clock-frequency で指定（まずは 8 MHz） */
-		clock-frequency = <8000000>;
+		clock-frequency = <20000000>;
 
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -42,16 +41,44 @@
 
 			width = <240>;
 			height = <320>;
-            rotation = <90>;
+			rotation = <90>;
 
-			/* 子(デバイス)側での MIPI 設定類 */
-			mipi-mode         = "MIPI_DBI_MODE_SPI_4WIRE";
-			pixel-format      = <ILI9XXX_PIXEL_FORMAT_RGB565>;
-			mipi-max-frequency = <8000000>;     /* デバイス側の上限 */
-//			duplex            = <SPI_HALF_DUPLEX>; /* 半二重に明示 */
-			/* 必要に応じて：mipi-cpol; mipi-cpha; mipi-hold-cs; など */
-
-//			display-inversion;
+			mipi-mode           = "MIPI_DBI_MODE_SPI_4WIRE";
+			pixel-format        = <ILI9XXX_PIXEL_FORMAT_RGB565>;
+			mipi-max-frequency  = <40000000>;
+			mipi-hold-cs;
 		};
 	};
+
+	/* XPT2046（reg=1 → 上の cs-gpios の2本目=IO21 を使う） */
+	xpt2046: touchscreen@1 {
+		compatible = "xptek,xpt2046";
+		reg = <1>;
+		status = "okay";
+		spi-max-frequency = <2000000>;
+
+		int-gpios = <&gpio0 22 GPIO_ACTIVE_LOW>; /* PENIRQ */
+
+		/* 画面解像度（表示側 320x240 に合わせる） */
+		touchscreen-size-x = <320>;
+		touchscreen-size-y = <240>;
+
+		/* 仮キャリブレーション（後で微調整） */
+		min-x = <200>;  max-x = <3900>;
+		min-y = <200>;  max-y = <3900>;
+	};
 };
+
+/* ★ ここがポイント：必ず / { ... } の中に作る ★ */
+ / {
+     lvgl_touch: lvgl_pointer_input {
+         compatible = "zephyr,lvgl-pointer-input";
+         input = <&xpt2046>;     /* ← phandle */
+         display = <&ili9341>;   /* ← phandle */
+         swap-xy;                /* rotation=90 ならまずコレ */
+         /* 必要なら
+          * invert-x;
+          * invert-y;
+          */
+     };
+ };
