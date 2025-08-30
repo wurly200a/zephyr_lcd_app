@@ -3,126 +3,190 @@
 #include <zephyr/devicetree.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/display.h>
+#include <zephyr/input/input.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/shell/shell.h>
+#include <inttypes.h>
 #include <lvgl.h>
 
 LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
 
-/* BL=IO32（HIGHで点灯。基板が逆なら GPIO_OUTPUT_INACTIVE に） */
+/* === Backlight: IO32（HIGHで点灯。基板が逆なら GPIO_OUTPUT_INACTIVE に） === */
 #define BLK_PORT DT_NODELABEL(gpio0)
 #define BLK_PIN  32
 
-/* 1秒ごとにラベルを更新（v9はアクセサでuser_data取得） */
-static void timer_cb(lv_timer_t *timer)
+#define CLAMPI(v, lo, hi) ((v) < (lo) ? (lo) : ((v) > (hi) ? (hi) : (v)))
+
+/* === RAW→UI: inputコールバックでmsgqに積み、mainループでUI更新 === */
+struct touch_evt { int16_t x, y; uint8_t pressed; };
+K_MSGQ_DEFINE(touch_msgq, sizeof(struct touch_evt), 16, 4);
+
+/* 画面部品 */
+static lv_obj_t *lbl_title, *lbl_xy, *lbl_hb, *cursor;
+static int16_t scr_w, scr_h;
+
+/* ---- 座標変換モード（ビット） ----
+ * bit0: SWAP_XY
+ * bit1: INVERT_X
+ * bit2: INVERT_Y
+ * 例) 5(=0b101) → SWAP + INVERT_Y
+ */
+enum { MAP_SWAP=0x1, MAP_INVX=0x2, MAP_INVY=0x4 };
+static uint8_t g_map = (MAP_SWAP | MAP_INVX | MAP_INVY);  /* ← rotation=90 の定番初期値 */
+
+static inline void map_touch_to_screen(int rx, int ry, int *sx, int *sy)
 {
-    lv_obj_t *label = (lv_obj_t *)lv_timer_get_user_data(timer);
-    static int sec;
-    lv_label_set_text_fmt(label, "sec=%d", sec++);
+    int x = rx, y = ry;
+    if (g_map & MAP_SWAP) { int t = x; x = y; y = t; }
+    if (g_map & MAP_INVX) x = (scr_w - 1) - x;
+    if (g_map & MAP_INVY) y = (scr_h - 1) - y;
+    *sx = CLAMPI(x, 0, scr_w - 1);
+    *sy = CLAMPI(y, 0, scr_h - 1);
 }
 
-/* === 追加: タッチ可視化 === */
-static void touch_ev_cb(lv_event_t *e)
+static void show_map_on_title(void)
 {
-    lv_obj_t *label = (lv_obj_t *)lv_event_get_user_data(e);
-    lv_event_code_t code = lv_event_get_code(e);
+    lv_label_set_text_fmt(lbl_title,
+        "LVGL on Zephyr (ILI9341) — map=%u [%s%s%s]",
+        g_map,
+        (g_map&MAP_SWAP) ? "SWAP " : "",
+        (g_map&MAP_INVX) ? "INVX " : "",
+        (g_map&MAP_INVY) ? "INVY " : "");
+}
 
-    lv_point_t p = { -1, -1 };
-    lv_indev_t *indev = lv_indev_get_act(); /* 現在処理中の入力デバイス（ポインタ想定） */
-    if (indev && lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
-        lv_indev_get_point(indev, &p);
+/* RAWのダンプ＋最新だけmsgqへ投入 */
+static void raw_input_cb(struct input_event *evt, void *user_data)
+{
+    static int32_t rx, ry; static int pressed;
+    if (evt->type == INPUT_EV_ABS) {
+        if (evt->code == INPUT_ABS_X) rx = evt->value;
+        if (evt->code == INPUT_ABS_Y) ry = evt->value;
+    } else if (evt->type == INPUT_EV_KEY && evt->code == INPUT_BTN_TOUCH) {
+        pressed = (evt->value != 0);
     }
-
-    if (code == LV_EVENT_PRESSED) {
-        lv_label_set_text_fmt(label, "Touch: PRESS  x=%d y=%d", p.x, p.y);
-    } else if (code == LV_EVENT_PRESSING) {
-        lv_label_set_text_fmt(label, "Touch: DRAG   x=%d y=%d", p.x, p.y);
-    } else if (code == LV_EVENT_RELEASED) {
-        lv_label_set_text_fmt(label, "Touch: RELEASE x=%d y=%d", p.x, p.y);
+    if (evt->sync) {
+        LOG_INF("[RAW] dev=%s %s x=%" PRId32 " y=%" PRId32,
+                evt->dev ? evt->dev->name : "?", pressed ? "DOWN":"UP", rx, ry);
+        struct touch_evt m = { .x=(int16_t)rx, .y=(int16_t)ry, .pressed=(uint8_t)pressed };
+        if (k_msgq_put(&touch_msgq, &m, K_NO_WAIT) != 0) {
+            struct touch_evt drop; (void)k_msgq_get(&touch_msgq, &drop, K_NO_WAIT);
+            (void)k_msgq_put(&touch_msgq, &m, K_NO_WAIT);
+        }
     }
 }
+/* xpt2046ノードだけ監視（全デバイスを見るなら第1引数をNULL） */
+INPUT_CALLBACK_DEFINE(DEVICE_DT_GET(DT_NODELABEL(xpt2046)), raw_input_cb, NULL);
+
+/* --- Shell: touch_map <0..7> / touch_map show --- */
+static int cmd_touch_map(const struct shell *shell, size_t argc, char **argv)
+{
+    if (argc == 2 && strcmp(argv[1], "show") == 0) {
+        shell_print(shell, "map=%u (bits: swap=%d invx=%d invy=%d)",
+            g_map, !!(g_map&MAP_SWAP), !!(g_map&MAP_INVX), !!(g_map&MAP_INVY));
+        return 0;
+    }
+    if (argc != 2) {
+        shell_error(shell, "usage: touch_map <0..7>|show");
+        return -EINVAL;
+    }
+    char *endp = NULL;
+    long v = strtol(argv[1], &endp, 0);
+    if (endp==argv[1] || v < 0 || v > 7) {
+        shell_error(shell, "invalid value: %s (0..7)", argv[1]);
+        return -EINVAL;
+    }
+    g_map = (uint8_t)v;
+    LOG_INF("touch_map set to %u", g_map);
+    if (lbl_title) show_map_on_title(); /* 画面にも反映 */
+    return 0;
+}
+SHELL_CMD_ARG_REGISTER(touch_map, NULL, "set touch mapping 0..7 or 'show'", cmd_touch_map, 2, 0);
 
 void main(void)
 {
-    /* バックライト ON */
+    /* --- バックライト ON --- */
     const struct device *gpio0 = DEVICE_DT_GET(BLK_PORT);
     if (device_is_ready(gpio0)) {
         gpio_pin_configure(gpio0, BLK_PIN, GPIO_OUTPUT_ACTIVE);
     }
 
-    /* ディスプレイ */
+    /* --- ディスプレイ --- */
     const struct device *disp = DEVICE_DT_GET(DT_CHOSEN(zephyr_display));
-    if (!device_is_ready(disp)) {
-        LOG_ERR("display not ready");
-        return;
-    }
+    if (!device_is_ready(disp)) { LOG_ERR("display not ready"); return; }
     display_blanking_off(disp);
 
     struct display_capabilities cap;
     display_get_capabilities(disp, &cap);
+    scr_w = (int16_t)cap.x_resolution;
+    scr_h = (int16_t)cap.y_resolution;
     LOG_INF("Display %ux%u rotation ok", cap.x_resolution, cap.y_resolution);
 
-    /* 背景グレー＋文字は白 */
+    /* --- 背景＆基本スタイル --- */
     lv_obj_t *scr = lv_screen_active();
     lv_obj_set_style_bg_color(scr, lv_color_hex(0x202020), 0);
     lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
-
-    static lv_style_t st_white;
-    lv_style_init(&st_white);
+    static lv_style_t st_white; lv_style_init(&st_white);
     lv_style_set_text_color(&st_white, lv_color_white());
-    lv_style_set_text_font(&st_white, LV_FONT_DEFAULT);  /* Kconfigの既定フォント */
+    lv_style_set_text_font(&st_white, LV_FONT_DEFAULT);
     lv_obj_add_style(scr, &st_white, 0);
 
-    /* タイトル */
-    lv_obj_t *title = lv_label_create(scr);
-    lv_label_set_text(title, "LVGL on Zephyr (ILI9341)");
-    lv_obj_align(title, LV_ALIGN_TOP_LEFT, 8, 8);
+    /* --- タイトル（現在のmapを表示） --- */
+    lbl_title = lv_label_create(scr);
+    lv_obj_align(lbl_title, LV_ALIGN_TOP_LEFT, 8, 8);
+    show_map_on_title();
 
-    /* サブテキスト */
-    lv_obj_t *hello = lv_label_create(scr);
-    lv_label_set_text(hello, "Hello, world! 1234");
-    lv_obj_align(hello, LV_ALIGN_TOP_LEFT, 8, 30);
+    /* --- 心拍表示 --- */
+    lbl_hb = lv_label_create(scr);
+    lv_label_set_text(lbl_hb, "hb=0");
+    lv_obj_align(lbl_hb, LV_ALIGN_TOP_RIGHT, -8, 8);
 
-    /* カウンタ */
-    lv_obj_t *cnt = lv_label_create(scr);
-    lv_label_set_text(cnt, "sec=0");
-    lv_obj_align(cnt, LV_ALIGN_TOP_LEFT, 8, 50);
-    (void)lv_timer_create(timer_cb, 1000, cnt);
+    /* --- 座標表示 --- */
+    lbl_xy = lv_label_create(scr);
+    lv_label_set_text(lbl_xy, "Touch: (waiting)");
+    lv_obj_align(lbl_xy, LV_ALIGN_TOP_LEFT, 8, 30);
+#if defined(CONFIG_LV_FONT_MONTSERRAT_20)
+    extern const lv_font_t lv_font_montserrat_20;
+    lv_obj_set_style_text_font(lbl_xy, &lv_font_montserrat_20, 0);
+#endif
 
-    /* 赤いテストボックス（画素描画の確認） */
-    lv_obj_t *box = lv_obj_create(scr);
-    lv_obj_set_size(box, 120, 40);
-    lv_obj_set_style_bg_color(box, lv_color_hex(0xFF0000), 0);
-    lv_obj_align(box, LV_ALIGN_BOTTOM_RIGHT, -8, -8);
+    /* --- 白丸カーソル --- */
+    cursor = lv_obj_create(scr);
+    lv_obj_set_size(cursor, 12, 12);
+    lv_obj_set_style_bg_color(cursor, lv_color_white(), 0);
+    lv_obj_set_style_radius(cursor, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(cursor, 0, 0);
+    lv_obj_add_flag(cursor, LV_OBJ_FLAG_HIDDEN);
 
-    /* 1) タッチ状態を表示するラベル */
-    lv_obj_t *touch_lbl = lv_label_create(scr);
-    lv_label_set_text(touch_lbl, "Touch: (waiting)");
-    lv_obj_align(touch_lbl, LV_ALIGN_BOTTOM_LEFT, 8, -56);
-
-    /* ルート画面をクリック可能にしてイベントを受ける */
-    lv_obj_add_flag(scr, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_event_cb(scr, touch_ev_cb, LV_EVENT_PRESSED,   touch_lbl);
-    lv_obj_add_event_cb(scr, touch_ev_cb, LV_EVENT_PRESSING,  touch_lbl);
-    lv_obj_add_event_cb(scr, touch_ev_cb, LV_EVENT_RELEASED,  touch_lbl);
-
-    /* 2) ポインタにカーソル丸を付ける（指の位置が可視化される） */
-    lv_indev_t *indev = NULL;
-    for (indev = lv_indev_get_next(NULL); indev; indev = lv_indev_get_next(indev)) {
-        if (lv_indev_get_type(indev) == LV_INDEV_TYPE_POINTER) {
-            lv_obj_t *cursor = lv_obj_create(scr);
-            lv_obj_set_size(cursor, 12, 12);
-            lv_obj_set_style_bg_color(cursor, lv_color_white(), 0);
-            lv_obj_set_style_radius(cursor, LV_RADIUS_CIRCLE, 0);
-            lv_obj_set_style_border_width(cursor, 0, 0);
-            lv_indev_set_cursor(indev, cursor);
-            break;
-        }
-    }
-
-    /* 初回強制リフレッシュ */
+    /* 初回表示 */
     lv_refr_now(NULL);
 
+    /* --- メイン“手動ポンプ”ループ --- */
+    uint32_t hb = 0; int64_t next_hb = k_uptime_get() + 500;
     for (;;) {
-        k_sleep(K_SECONDS(60));
+        struct touch_evt m, last; bool have = false;
+        /* 10msで掃いて最後の1件採用 */
+        for (int i=0;i<10;i++) {
+            if (k_msgq_get(&touch_msgq, &m, K_MSEC(1)) == 0) { last = m; have = true; }
+        }
+        if (have) {
+            int sx, sy;
+            map_touch_to_screen(last.x, last.y, &sx, &sy);
+            lv_label_set_text_fmt(lbl_xy, "Touch: %s  x=%d  y=%d",
+                                  last.pressed ? "DOWN" : "UP", sx, sy);
+            if (last.pressed) {
+                lv_obj_clear_flag(cursor, LV_OBJ_FLAG_HIDDEN);
+                lv_obj_set_pos(cursor, sx - 6, sy - 6);
+            } else {
+                lv_obj_add_flag(cursor, LV_OBJ_FLAG_HIDDEN);
+            }
+            lv_refr_now(NULL);
+        }
+        int64_t now = k_uptime_get();
+        if (now >= next_hb) {
+            lv_label_set_text_fmt(lbl_hb, "hb=%u", ++hb);
+            lv_refr_now(NULL);
+            next_hb = now + 500;
+        }
+        k_msleep(2);
     }
 }

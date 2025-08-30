@@ -1,47 +1,21 @@
 
-# Build & Flash
-
-## Prepare
+# Build & Flash & Monitor
 
 ```
 cd ~/zephyrproject/zephyr
 source ~/zephyrproject/.venv/bin/activate
-```
-
-if necessary
-
-```
 ZEPHYR_BASE=~/zephyrproject/zephyr
-```
-
-## Build Sample
-
-```
-west build -p always -b esp32_devkitc/esp32/procpu \
-  ~/zephyrproject/zephyr/samples/drivers/display \
-  -DDTC_OVERLAY_FILE=~/project_zephyr/zephyr_lcd_app/boards/esp32_devkitc_esp32_procpu.overlay
-```
-
-```
-west build -p always -b esp32_devkitc/esp32/procpu \
-  ~/zephyrproject/zephyr/samples/subsys/display/lvgl \
-  -DDTC_OVERLAY_FILE=~/project_zephyr/zephyr_lcd_app/boards/esp32_devkitc_esp32_procpu.overlay
-```
-
-## Build
-
-```
-west build -p always -b esp32_devkitc/esp32/procpu -S psram-4M -S psram-wifi ~/project_zephyr/zephyr_lcd_app
-```
-
-## Flash
-
-```
+west build -p always -b esp32_devkitc/esp32/procpu -S psram-4M -S psram-wifi ~/project/zephyr_lcd_app
 west flash
+west espressif monitor
 ```
 
-## Monitor
+# Build & Flash & Monitor (using docker container)
 
 ```
+cd ~/project/zephyr_lcd_app
+DEV=/dev/ttyUSB0;docker run --rm -it --device=${DEV} --group-add $(stat -c '%g' ${DEV}) -v ${PWD}:/home/builder/work -w /home/builder/zephyrproject ghcr.io/wurly200a/builder-zephyr-esp32/zephyr-esp32:latest
+west build -p always -b esp32_devkitc/esp32/procpu -S psram-4M -S psram-wifi ~/work
+west flash
 west espressif monitor
 ```

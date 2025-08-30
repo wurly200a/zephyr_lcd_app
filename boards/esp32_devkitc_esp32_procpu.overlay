@@ -60,8 +60,8 @@
 		int-gpios = <&gpio0 22 GPIO_ACTIVE_LOW>; /* PENIRQ */
 
 		/* 画面解像度（表示側 320x240 に合わせる） */
-		touchscreen-size-x = <320>;
-		touchscreen-size-y = <240>;
+		touchscreen-size-x = <240>;
+		touchscreen-size-y = <320>;
 
 		/* 仮キャリブレーション（後で微調整） */
 		min-x = <200>;  max-x = <3900>;
